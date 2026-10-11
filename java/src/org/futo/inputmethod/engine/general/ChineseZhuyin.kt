@@ -33,8 +33,19 @@ object ChineseZhuyin {
     private val toRime: Map<Int, Int> = Transformation.entries.associate { it.value.code to it.key.code }
     private val fromRime: Map<Int, Int> = Transformation.entries.associate { it.key.code to it.value.code }
 
-    fun toRimeKey(codePoint: Int): Int = toRime[codePoint] ?: codePoint
-    fun fromRimeKey(code: Int): Int = fromRime[code] ?: code
+    // Latin letters (e.g. from long-press) would be read as zhuyin keys, so they are sent as
+    // X11 Unicode keysyms instead, which RIME passes through to be typed as-is
+    private const val UnicodeKeysymOffset = 0x1000000
+
+    fun toRimeKey(codePoint: Int): Int = toRime[codePoint] ?: when(codePoint) {
+        in 'a'.code..'z'.code, in 'A'.code..'Z'.code -> UnicodeKeysymOffset + codePoint
+        else -> codePoint
+    }
+
+    fun fromRimeKey(code: Int): Int = fromRime[code] ?: when {
+        code > UnicodeKeysymOffset -> code - UnicodeKeysymOffset
+        else -> code
+    }
 
     // Spelling rules adapted from https://github.com/rime/rime-bopomofo (zhuyin.yaml)
     private val schema = """

@@ -783,7 +783,7 @@ class ChineseIME(val helper: IMEHelper) : IMEInterface, SuggestionStripViewAcces
                         rawInput.backspace()
                     } else if(x11Code == XK_Return || x11Code == ' '.code) {
                         rawInput.clear()
-                    } else if(event.mKeyCode == Event.NOT_A_KEY_CODE) {
+                    } else if(event.mKeyCode == Event.NOT_A_KEY_CODE && Character.isBmpCodePoint(codePoint)) {
                         rawInput.append(codePoint)
                     }
 
