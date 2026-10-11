@@ -247,8 +247,11 @@ class ChineseIME(val helper: IMEHelper) : IMEInterface, SuggestionStripViewAcces
 
     override fun getLoadingState(): MutableState<Boolean>? = rimeLoading
 
+    private val isZhuyin get() = layoutHint == "zhuyin"
+
     private val currentTransformation get() = when(layoutHint) {
         "stroke" -> StrokeTransformation
+        "zhuyin" -> ChineseZhuyin.Transformation
         else -> emptyMap()
     }
 
@@ -342,7 +345,9 @@ class ChineseIME(val helper: IMEHelper) : IMEInterface, SuggestionStripViewAcces
             XK_Return    -> sendDownUpKeyEvent(KeyEvent.KEYCODE_ENTER, 0)
             else -> {
                 if (rime.preeditFlow.value.isEmpty() || editingState.active) {
-                    connect?.commitText(String(Character.toChars(x11Code)), 1)
+                    // e.g. a tone typed with nothing to apply it to, commit the symbol itself
+                    val codePoint = if(isZhuyin) ChineseZhuyin.fromRimeKey(x11Code) else x11Code
+                    connect?.commitText(String(Character.toChars(codePoint)), 1)
                 } else {
                     coroScope.launch {
                         rime.commitComposition()
@@ -550,6 +555,8 @@ class ChineseIME(val helper: IMEHelper) : IMEInterface, SuggestionStripViewAcces
 
                 return when (locale.country.uppercase()) {
                     "TW", "HK", "MO" -> false
+                    // Zhuyin is used in Taiwan, so default to traditional when unspecified
+                    "" -> !isZhuyin
                     else -> true
                 }
             }
@@ -569,17 +576,25 @@ class ChineseIME(val helper: IMEHelper) : IMEInterface, SuggestionStripViewAcces
 
     private fun writeCustomizationFile(cfg: Configuration) {
         val schema = cfg.schema
+        val isZhuyinSchema = schema == ChineseZhuyin.SchemaId
+        if(isZhuyinSchema) ChineseZhuyin.writeSchemaFiles(getUser(helper.context))
+
         val file = File(getUser(helper.context), "${schema}.custom.yaml")
         val content = buildString {
             appendLine("patch:")
 
-            appendLine("    translator/enable_correction: ${cfg.autocorrect}")
+            // RIME's correction assumes a QWERTY layout, which zhuyin's keys don't follow
+            appendLine("    translator/enable_correction: ${cfg.autocorrect && !isZhuyinSchema}")
             appendLine("    translator/enable_user_dict: ${cfg.learning}")
 
             appendLine("    switches/+:")
             appendLine("        - name: futo_zh_simp")
             appendLine("          reset: ${if(cfg.simplification) 1 else 0}")
             appendLine("          states: [ 漢字, 汉字 ]")
+            if(isZhuyinSchema) {
+                appendLine("        - name: futo_zh_tw")
+                appendLine("          reset: ${if(cfg.simplification) 0 else 1}")
+            }
             appendLine("    simplifier/option_name: futo_zh_simp")
 
             // Fuzzy pinyin only added to pinyin layouts
@@ -627,6 +642,10 @@ class ChineseIME(val helper: IMEHelper) : IMEInterface, SuggestionStripViewAcces
 
                     "stroke" -> {
                         "stroke"
+                    }
+
+                    "zhuyin" -> {
+                        ChineseZhuyin.SchemaId
                     }
 
                     null -> {
@@ -744,9 +763,10 @@ class ChineseIME(val helper: IMEHelper) : IMEInterface, SuggestionStripViewAcces
             Event.EVENT_TYPE_INPUT_KEYPRESS_RESUMED -> {
                 if (triggerIfIsAction(event.mKeyCode))
                     return
+                val codePoint = if(isZhuyin) ChineseZhuyin.toRimeKey(event.mCodePoint) else event.mCodePoint
                 val x11Code = when (event.mKeyCode) {
                     Constants.CODE_DELETE -> '\b'.code
-                    Event.NOT_A_KEY_CODE -> event.mCodePoint
+                    Event.NOT_A_KEY_CODE -> codePoint
                     else -> return
                 }.let { when (it) {
                     '\b'.code -> XK_BackSpace
@@ -764,7 +784,7 @@ class ChineseIME(val helper: IMEHelper) : IMEInterface, SuggestionStripViewAcces
                     } else if(x11Code == XK_Return || x11Code == ' '.code) {
                         rawInput.clear()
                     } else if(event.mKeyCode == Event.NOT_A_KEY_CODE) {
-                        rawInput.append(event.mCodePoint)
+                        rawInput.append(codePoint)
                     }
 
                     coroScope.launch { rime.processX11Code(x11Code) }

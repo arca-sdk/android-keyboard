@@ -1,5 +1,7 @@
 # FUTO Keyboard
 
+> **Modified version:** this repository is a modified copy of [FUTO Keyboard](https://gitlab.futo.org/keyboard/latinime), adding Zhuyin (Bopomofo) input for Chinese. See the commit history for all changes made relative to the original.
+
 The goal is to make a good modern keyboard that stays offline and doesn't spy on you. This keyboard is a fork of [LatinIME, The Android Open-Source Keyboard](https://android.googlesource.com/platform/packages/inputmethods/LatinIME), with significant changes made to it.
 
 Check out the [FUTO Keyboard website](https://keyboard.futo.tech/) for downloads and more information.
