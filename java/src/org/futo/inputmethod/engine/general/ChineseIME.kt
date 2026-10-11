@@ -629,7 +629,6 @@ class ChineseIME(val helper: IMEHelper) : IMEInterface, SuggestionStripViewAcces
 
     private fun updateConfig() {
         coroScope.launch {
-            if(editingState.active) return@launch
             if(!configSemaphore.tryAcquire()) {
                 // e.g. the layout changed while loading, apply it once the current update is done
                 configUpdatePending = true
@@ -637,6 +636,9 @@ class ChineseIME(val helper: IMEHelper) : IMEInterface, SuggestionStripViewAcces
             }
 
             try {
+                // Checked within try, so that a loading state from a previous update still ends
+                if(editingState.active) return@launch
+
                 val settings = Settings.getInstance().current
                 val locale = settings.mLocale
 
@@ -692,8 +694,9 @@ class ChineseIME(val helper: IMEHelper) : IMEInterface, SuggestionStripViewAcces
 
                     // deploy() returns while RIME is still building in the background, during
                     // which it rejects all input. The first build can take a while on a phone,
-                    // so keep waiting with the loading indicator shown
-                    val deadline = SystemClock.uptimeMillis() + 60_000L
+                    // so keep waiting with the loading indicator shown. Past the deadline RIME
+                    // is assumed to be broken, so typing isn't held back forever
+                    val deadline = SystemClock.uptimeMillis() + 180_000L
                     var result = rime.selectSchema(config.schema)
                     while(!result && SystemClock.uptimeMillis() < deadline) {
                         delay(300L)
@@ -701,7 +704,7 @@ class ChineseIME(val helper: IMEHelper) : IMEInterface, SuggestionStripViewAcces
                     }
 
                     if(!result) {
-                        Log.e(TAG, "Failed to select schema 60s after deployment!")
+                        Log.e(TAG, "Failed to select schema 3 minutes after deployment!")
                         selectSchemaTimedOut = true
                     }
 
@@ -713,15 +716,17 @@ class ChineseIME(val helper: IMEHelper) : IMEInterface, SuggestionStripViewAcces
                 }
             } finally {
                 configSemaphore.release()
-                rimeLoading.value = false
-
-                val keys = keysWhileLoading.toList()
-                keysWhileLoading.clear()
-                keys.forEach { onEvent(it) }
 
                 if(configUpdatePending) {
+                    // Keep loading, as the held keys belong to the pending configuration
                     configUpdatePending = false
                     updateConfig()
+                } else {
+                    rimeLoading.value = false
+
+                    val keys = keysWhileLoading.toList()
+                    keysWhileLoading.clear()
+                    keys.forEach { onEvent(it) }
                 }
             }
         }
