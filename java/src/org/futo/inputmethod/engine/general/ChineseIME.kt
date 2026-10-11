@@ -370,6 +370,12 @@ class ChineseIME(val helper: IMEHelper) : IMEInterface, SuggestionStripViewAcces
                         Log.d(TAG, "Schemas: ${it.joinToString { it.toString() }} ")
                     }
                 }
+
+                // Deployment took longer than updateConfig waited, apply the configuration now
+                if(selectSchemaTimedOut) {
+                    selectSchemaTimedOut = false
+                    updateConfig()
+                }
             }
             else -> {}
         }
@@ -616,6 +622,11 @@ class ChineseIME(val helper: IMEHelper) : IMEInterface, SuggestionStripViewAcces
 
     private var configSemaphore = Semaphore(1)
     private var configUpdatePending = false
+    private var selectSchemaTimedOut = false
+
+    // RIME rejects input while deploying, so keys typed meanwhile are typed once it's done
+    private val keysWhileLoading = mutableListOf<Event>()
+
     private fun updateConfig() {
         coroScope.launch {
             if(editingState.active) return@launch
@@ -691,6 +702,7 @@ class ChineseIME(val helper: IMEHelper) : IMEInterface, SuggestionStripViewAcces
 
                     if(!result) {
                         Log.e(TAG, "Failed to select schema 60s after deployment!")
+                        selectSchemaTimedOut = true
                     }
 
                     rime.setOption("simplification", simplified)
@@ -702,6 +714,10 @@ class ChineseIME(val helper: IMEHelper) : IMEInterface, SuggestionStripViewAcces
             } finally {
                 configSemaphore.release()
                 rimeLoading.value = false
+
+                val keys = keysWhileLoading.toList()
+                keysWhileLoading.clear()
+                keys.forEach { onEvent(it) }
 
                 if(configUpdatePending) {
                     configUpdatePending = false
@@ -717,6 +733,7 @@ class ChineseIME(val helper: IMEHelper) : IMEInterface, SuggestionStripViewAcces
     }
 
     override fun onFinishInput() {
+        keysWhileLoading.clear()
         if(editingState.active) return
         coroScope.launch {
             waitingToSelect = null
@@ -777,6 +794,10 @@ class ChineseIME(val helper: IMEHelper) : IMEInterface, SuggestionStripViewAcces
             Event.EVENT_TYPE_INPUT_KEYPRESS_RESUMED -> {
                 if (triggerIfIsAction(event.mKeyCode))
                     return
+                if(rimeLoading.value) {
+                    keysWhileLoading.add(event)
+                    return
+                }
                 val codePoint = if(isZhuyin) ChineseZhuyin.toRimeKey(event.mCodePoint) else event.mCodePoint
                 val x11Code = when (event.mKeyCode) {
                     Constants.CODE_DELETE -> '\b'.code
