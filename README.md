@@ -1,6 +1,6 @@
 # FUTO Keyboard
 
-> **Modified version:** this repository is a modified copy of [FUTO Keyboard](https://gitlab.futo.org/keyboard/latinime), adding Zhuyin (Bopomofo) input for Chinese. See the commit history for all changes made relative to the original.
+> **Modified version:** this repository is a modified copy of [FUTO Keyboard](https://github.com/futo-org/android-keyboard), adding Zhuyin (Bopomofo) input for Chinese. See the commit history for all changes made relative to the original.
 
 The goal is to make a good modern keyboard that stays offline and doesn't spy on you. This keyboard is a fork of [LatinIME, The Android Open-Source Keyboard](https://android.googlesource.com/platform/packages/inputmethods/LatinIME), with significant changes made to it.
 
@@ -28,7 +28,7 @@ If you want to contribute layouts, check out the [layouts repo](https://github.c
 
 When cloning the repository, you must perform a recursive clone to fetch all dependencies:
 ```
-git clone --recursive https://gitlab.futo.org/keyboard/latinime.git
+git clone --recursive https://github.com/arca-sdk/android-keyboard.git
 ```
 
 If you forgot to specify recursive clone, use this to fetch submodules:
