@@ -624,8 +624,9 @@ class ChineseIME(val helper: IMEHelper) : IMEInterface, SuggestionStripViewAcces
     private var configUpdatePending = false
     private var selectSchemaTimedOut = false
 
-    // RIME rejects input while deploying, so input meanwhile is held and replayed once it's done
-    private val inputWhileLoading = mutableListOf<Event>()
+    // RIME rejects input while deploying, so keys typed meanwhile are typed once it's done. Only
+    // keypresses are held, as they all go through RIME and so are replayed in order
+    private val keysWhileLoading = mutableListOf<Event>()
 
     private fun updateConfig() {
         coroScope.launch {
@@ -718,15 +719,15 @@ class ChineseIME(val helper: IMEHelper) : IMEInterface, SuggestionStripViewAcces
                 configSemaphore.release()
 
                 if(configUpdatePending) {
-                    // Keep loading, as the held input belongs to the pending configuration
+                    // Keep loading, as the held keys belong to the pending configuration
                     configUpdatePending = false
                     updateConfig()
                 } else {
                     rimeLoading.value = false
 
-                    val events = inputWhileLoading.toList()
-                    inputWhileLoading.clear()
-                    events.forEach { onEvent(it) }
+                    val keys = keysWhileLoading.toList()
+                    keysWhileLoading.clear()
+                    keys.forEach { onEvent(it) }
                 }
             }
         }
@@ -738,7 +739,7 @@ class ChineseIME(val helper: IMEHelper) : IMEInterface, SuggestionStripViewAcces
     }
 
     override fun onFinishInput() {
-        inputWhileLoading.clear()
+        keysWhileLoading.clear()
         if(editingState.active) return
         coroScope.launch {
             waitingToSelect = null
@@ -795,13 +796,17 @@ class ChineseIME(val helper: IMEHelper) : IMEInterface, SuggestionStripViewAcces
     override fun onEvent(event: Event) {
         helper.requestCursorUpdate()
 
-        // Hold all input while loading (but run actions right away), so that text and cursor
-        // movements are replayed in the order they happened
         if(rimeLoading.value) {
             val isKeypress = event.eventType == Event.EVENT_TYPE_INPUT_KEYPRESS
                     || event.eventType == Event.EVENT_TYPE_INPUT_KEYPRESS_RESUMED
-            if(!(isKeypress && triggerIfIsAction(event.mKeyCode))) inputWhileLoading.add(event)
-            return
+            if(isKeypress) {
+                if(!triggerIfIsAction(event.mKeyCode)) keysWhileLoading.add(event)
+                return
+            }
+
+            // Other input (e.g. an emoji or a cursor key) acts immediately rather than through
+            // RIME, so it can't be ordered after held keys. Only handle it if none are held
+            if(keysWhileLoading.isNotEmpty()) return
         }
 
         when (event.eventType) {
