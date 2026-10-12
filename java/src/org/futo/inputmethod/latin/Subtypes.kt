@@ -51,11 +51,30 @@ import org.futo.inputmethod.latin.uix.settings.useDataStoreValue
 import org.futo.inputmethod.latin.uix.theme.Typography
 import org.futo.inputmethod.latin.utils.SubtypeLocaleUtils
 import org.futo.inputmethod.v2keyboard.LayoutManager
+import java.util.IllformedLocaleException
 import java.util.Locale
 import kotlin.math.sign
 
-fun localeFromString(s: String): Locale =
-    Locale.forLanguageTag(s.replace("__#", "-").replace("_", "-"))
+fun localeFromString(s: String): Locale {
+    // Locale.toString() puts the script after "_#", such as zh__#Hant or zh_TW_#Hant (e.g. from
+    // the system locale), which isn't a valid language tag, so the latter would lose its script
+    val scriptStart = s.indexOf("_#")
+    if(scriptStart != -1) {
+        val parts = s.substring(0, scriptStart).split("_")
+        val script = s.substring(scriptStart + 2).substringBefore("-")
+        if(script.length == 4) {
+            try {
+                return Locale.Builder()
+                    .setLanguage(parts[0])
+                    .setRegion(parts.getOrElse(1) { "" })
+                    .setScript(script)
+                    .build()
+            } catch(e: IllformedLocaleException) { }
+        }
+    }
+
+    return Locale.forLanguageTag(s.replace("__#", "-").replace("_", "-"))
+}
 
 fun String.toLocale() = localeFromString(this)
 
