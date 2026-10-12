@@ -26,6 +26,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
@@ -369,6 +370,12 @@ class ChineseIME(val helper: IMEHelper) : IMEInterface, SuggestionStripViewAcces
                         Log.d(TAG, "Schemas: ${it.joinToString { it.toString() }} ")
                     }
                 }
+
+                // Deployment took longer than updateConfig waited, apply the configuration now
+                if(selectSchemaTimedOut) {
+                    selectSchemaTimedOut = false
+                    updateConfig()
+                }
             }
             else -> {}
         }
@@ -614,12 +621,25 @@ class ChineseIME(val helper: IMEHelper) : IMEInterface, SuggestionStripViewAcces
     }
 
     private var configSemaphore = Semaphore(1)
+    private var configUpdatePending = false
+    private var selectSchemaTimedOut = false
+
+    // RIME rejects input while deploying, so keys typed meanwhile are typed once it's done. Only
+    // keypresses are held, as they all go through RIME and so are replayed in order
+    private val keysWhileLoading = mutableListOf<Event>()
+
     private fun updateConfig() {
         coroScope.launch {
-            if(editingState.active) return@launch
-            if(!configSemaphore.tryAcquire()) return@launch
+            if(!configSemaphore.tryAcquire()) {
+                // e.g. the layout changed while loading, apply it once the current update is done
+                configUpdatePending = true
+                return@launch
+            }
 
             try {
+                // Checked within try, so that a loading state from a previous update still ends
+                if(editingState.active) return@launch
+
                 val settings = Settings.getInstance().current
                 val locale = settings.mLocale
 
@@ -673,26 +693,42 @@ class ChineseIME(val helper: IMEHelper) : IMEInterface, SuggestionStripViewAcces
                     writeCustomizationFile(config)
                     rime.deploy()
 
-                    var result = false
-                    for(i in 0..10) {
-                        if(rime.selectSchema(config.schema)) {
-                            result = true
-                            break
-                        }
-                        Thread.sleep(300L)
+                    // deploy() returns while RIME is still building in the background, during
+                    // which it rejects all input. The first build can take a while on a phone,
+                    // so keep waiting with the loading indicator shown. Past the deadline RIME
+                    // is assumed to be broken, so typing isn't held back forever
+                    val deadline = SystemClock.uptimeMillis() + 180_000L
+                    var result = rime.selectSchema(config.schema)
+                    while(!result && SystemClock.uptimeMillis() < deadline) {
+                        delay(300L)
+                        result = rime.selectSchema(config.schema)
                     }
 
                     if(!result) {
-                        Log.e(TAG, "Failed to select schema 3s after deployment!")
+                        Log.e(TAG, "Failed to select schema 3 minutes after deployment!")
+                        selectSchemaTimedOut = true
                     }
 
                     rime.setOption("simplification", simplified)
                     rime.setOption("traditional", !simplified)
-                    prevConfiguration = config
+
+                    // Only remember the configuration once applied, so that a failure is retried
+                    if(result) prevConfiguration = config
                 }
             } finally {
                 configSemaphore.release()
-                rimeLoading.value = false
+
+                if(configUpdatePending) {
+                    // Keep loading, as the held keys belong to the pending configuration
+                    configUpdatePending = false
+                    updateConfig()
+                } else {
+                    rimeLoading.value = false
+
+                    val keys = keysWhileLoading.toList()
+                    keysWhileLoading.clear()
+                    keys.forEach { onEvent(it) }
+                }
             }
         }
     }
@@ -703,6 +739,7 @@ class ChineseIME(val helper: IMEHelper) : IMEInterface, SuggestionStripViewAcces
     }
 
     override fun onFinishInput() {
+        keysWhileLoading.clear()
         if(editingState.active) return
         coroScope.launch {
             waitingToSelect = null
@@ -758,6 +795,20 @@ class ChineseIME(val helper: IMEHelper) : IMEInterface, SuggestionStripViewAcces
     }
     override fun onEvent(event: Event) {
         helper.requestCursorUpdate()
+
+        if(rimeLoading.value) {
+            val isKeypress = event.eventType == Event.EVENT_TYPE_INPUT_KEYPRESS
+                    || event.eventType == Event.EVENT_TYPE_INPUT_KEYPRESS_RESUMED
+            if(isKeypress) {
+                if(!triggerIfIsAction(event.mKeyCode)) keysWhileLoading.add(event)
+                return
+            }
+
+            // Other input (e.g. an emoji or a cursor key) acts immediately rather than through
+            // RIME, so it can't be ordered after held keys. Only handle it if none are held
+            if(keysWhileLoading.isNotEmpty()) return
+        }
+
         when (event.eventType) {
             Event.EVENT_TYPE_INPUT_KEYPRESS,
             Event.EVENT_TYPE_INPUT_KEYPRESS_RESUMED -> {
