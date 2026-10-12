@@ -827,16 +827,26 @@ class ChineseIME(val helper: IMEHelper) : IMEInterface, SuggestionStripViewAcces
                     else -> it
                 } }
 
+                // In Zhuyin, space after a symbol types the first tone. While editing the preedit,
+                // the symbol is in the editor rather than the raw input
+                val spaceTone = if(isZhuyin && x11Code == ' '.code) {
+                    val previousKey = when {
+                        editingState.active -> connect?.getTextBeforeCursor(1, 0)?.lastOrNull()
+                            ?.let { ChineseZhuyin.toRimeKey(it.code) }
+                        else -> rawInput.text.lastOrNull()?.code
+                    }
+                    ChineseZhuyin.firstToneForSpace(previousKey)
+                } else null
+
                 if(!editingState.active) {
                     // Only update outside editing state. We cannot update inside editing state,
                     // because the cursor position is unknown and we assume it's always at the end
-                    val spaceRawKey = if(isZhuyin && x11Code == ' '.code) ChineseZhuyin.rawKeyForSpace(rawInput.text) else null
-
                     if(x11Code == XK_BackSpace) {
                         rawInput.backspace()
-                    } else if(spaceRawKey != null) {
-                        // Space typed the first tone, rather than ending the composition
-                        rawInput.append(spaceRawKey.code)
+                    } else if(spaceTone != null) {
+                        // RIME takes the space as the first tone too, rather than ending the
+                        // composition
+                        rawInput.append(spaceTone)
                     } else if(x11Code == XK_Return || x11Code == ' '.code) {
                         rawInput.clear()
                     } else if(event.mKeyCode == Event.NOT_A_KEY_CODE && Character.isBmpCodePoint(codePoint)) {
@@ -845,7 +855,8 @@ class ChineseIME(val helper: IMEHelper) : IMEInterface, SuggestionStripViewAcces
 
                     coroScope.launch { rime.processX11Code(x11Code) }
                 } else {
-                    handlePassByMessage(x11Code, 0)
+                    // Spaces are dropped when the edited preedit is replayed, so type the tone
+                    handlePassByMessage(spaceTone ?: x11Code, 0)
                 }
             }
 

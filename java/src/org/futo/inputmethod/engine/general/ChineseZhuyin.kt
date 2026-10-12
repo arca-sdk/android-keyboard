@@ -56,12 +56,12 @@ object ChineseZhuyin {
     }
 
     /**
-     * The key to record in the raw input for a space typed after [input], if it types the first
-     * tone, which is the case after a symbol. Preedit editing only keeps letters, so it's recorded
-     * as the first tone's letter
+     * The first tone's key, if a space typed after the RIME key [previousKey] types the first
+     * tone, which is the case after a symbol. It stands for the space where only letters are kept,
+     * as in preedit editing
      */
-    fun rawKeyForSpace(input: String): Char? =
-        FirstToneKey.takeIf { input.lastOrNull()?.let { it in SymbolKeys } == true }
+    fun firstToneForSpace(previousKey: Int?): Int? =
+        FirstToneKey.code.takeIf { SymbolKeys.any { it.code == previousKey } }
 
     // Spelling rules adapted from https://github.com/rime/rime-bopomofo (zhuyin.yaml)
     private val schema = """
