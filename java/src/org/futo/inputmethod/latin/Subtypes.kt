@@ -57,16 +57,18 @@ import kotlin.math.sign
 
 fun localeFromString(s: String): Locale {
     // Locale.toString() puts the script after "_#", such as zh__#Hant or zh_TW_#Hant (e.g. from
-    // the system locale), which isn't a valid language tag, so the latter would lose its script
+    // the system locale), followed by any extensions after "_". That isn't a valid language tag,
+    // so the latter would lose its script
     val scriptStart = s.indexOf("_#")
     if(scriptStart != -1) {
         val parts = s.substring(0, scriptStart).split("_")
-        val script = s.substring(scriptStart + 2).substringBefore("-")
+        val script = s.substring(scriptStart + 2).takeWhile { it != '_' && it != '-' }
         if(script.length == 4) {
             try {
                 return Locale.Builder()
                     .setLanguage(parts[0])
                     .setRegion(parts.getOrElse(1) { "" })
+                    .setVariant(parts.getOrElse(2) { "" })
                     .setScript(script)
                     .build()
             } catch(e: IllformedLocaleException) { }
