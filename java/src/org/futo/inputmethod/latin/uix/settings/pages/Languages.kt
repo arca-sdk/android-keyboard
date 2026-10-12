@@ -568,7 +568,8 @@ fun LanguagesScreen(navController: NavHostController = rememberNavController()) 
     val context = LocalContext.current
     val resources = LocalResources.current
     val deleteDialogInfo: MutableState<DeleteInfo?> = remember { mutableStateOf(null) }
-    val languageDeleteInfo: MutableState<Locale?> = remember { mutableStateOf(null) }
+    // Key of the language in inputMethodList, as different keys can map to the same locale
+    val languageDeleteInfo: MutableState<String?> = remember { mutableStateOf(null) }
 
     val inputMethods = useDataStoreValue(SubtypesSetting)
     val inputMethodList = remember(inputMethods) {
@@ -607,18 +608,14 @@ fun LanguagesScreen(navController: NavHostController = rememberNavController()) 
             }
         )
     } else if (languageDeleteInfo.value != null) {
-        val info = languageDeleteInfo.value!!
+        val key = languageDeleteInfo.value!!
         ConfirmDeleteLanguageDialog(
-            locale = info,
+            locale = Subtypes.getLocale(key),
             onDelete = {
                 languageDeleteInfo.value = null
 
-                val key = inputMethodKeys.find { localeString ->
-                    Subtypes.getLocale(localeString) == info
-                }
-
-                if (key != null) {
-                    val subtypes = inputMethodList[key]!!
+                val subtypes = inputMethodList[key]
+                if (subtypes != null) {
                     subtypes.forEach { Subtypes.removeLanguage(context, it) }
 
                     if(multilingualBucket.value.contains(key)) {
@@ -708,7 +705,7 @@ fun LanguagesScreen(navController: NavHostController = rememberNavController()) 
                     )
                 ),
                 onLanguageRemoved = {
-                    languageDeleteInfo.value = locale
+                    languageDeleteInfo.value = localeString
                 },
                 onLayoutRemoved = { subtype ->
                     val layoutSetName = subtype.layoutSetName
