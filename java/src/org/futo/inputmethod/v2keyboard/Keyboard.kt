@@ -261,6 +261,12 @@ data class Keyboard(
     val rowHeightMode: RowHeightMode = RowHeightMode.ClampHeight,
 
     /**
+     * (optional) Whether letter rows beyond the usual three should keep the height of a
+     * three-row layout's rows, making the keyboard taller, rather than all rows shrinking to fit.
+     */
+    val keepStandardRowHeight: Boolean = false,
+
+    /**
      * (optional) Whether or not the ZWNJ key should be shown in place of the contextual key.
      */
     val useZWNJKey: Boolean = false,
