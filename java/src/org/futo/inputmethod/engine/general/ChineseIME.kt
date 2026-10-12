@@ -830,8 +830,13 @@ class ChineseIME(val helper: IMEHelper) : IMEInterface, SuggestionStripViewAcces
                 if(!editingState.active) {
                     // Only update outside editing state. We cannot update inside editing state,
                     // because the cursor position is unknown and we assume it's always at the end
+                    val spaceRawKey = if(isZhuyin && x11Code == ' '.code) ChineseZhuyin.rawKeyForSpace(rawInput.text) else null
+
                     if(x11Code == XK_BackSpace) {
                         rawInput.backspace()
+                    } else if(spaceRawKey != null) {
+                        // Space typed the first tone, rather than ending the composition
+                        rawInput.append(spaceRawKey.code)
                     } else if(x11Code == XK_Return || x11Code == ' '.code) {
                         rawInput.clear()
                     } else if(event.mKeyCode == Event.NOT_A_KEY_CODE && Character.isBmpCodePoint(codePoint)) {
