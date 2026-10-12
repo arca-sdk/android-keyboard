@@ -465,8 +465,8 @@ class KeyboardSizingCalculator(val context: Context, val uixManager: UixManager)
         val singularRowHeight = ((ResourceUtils.getDefaultKeyboardHeight(context.resources) + heightAddition - padding.bottom) / 4.0) *
                 savedSettings.heightMultiplier.guardNaN(1.0f)
 
-        val numRows = 4.0 +
-                ((effectiveRowCount - 5) / 2.0).coerceAtLeast(0.0) +
+        // Height in rows of a layout with three letter rows
+        val standardNumRows = 4.0 +
                 when { // Number row height
                     // If layout requires no number row, never add any number row height
                     layout.numberRowMode == NumberRowMode.AlwaysDisabled -> 0.0
@@ -486,6 +486,20 @@ class KeyboardSizingCalculator(val context: Context, val uixManager: UixManager)
                     settings.mIsArrowRowEnabled -> 0.8
                     else -> 0.0
                 }
+
+        val numRows = if(layout.keepStandardRowHeight) {
+            // In a three-row layout the bottom row takes one row, and the letter, number and arrow
+            // rows share the rest. Grow by that share for each extra letter row
+            val sharedRowHeight = 3.0 +
+                    (if(layout.numberRowMode.isActive(settings.mIsNumberRowEnabled)) effectiveRows.first { it.isNumberRow }.rowHeight else 0.0) +
+                    (if(settings.mIsArrowRowEnabled) ArrowRow.rowHeight else 0.0)
+            val extraLetterRows = (effectiveRows.filter { it.isLetterRow }.sumOf { it.rowHeight } - 3.0).coerceAtLeast(0.0)
+
+            standardNumRows + extraLetterRows * (standardNumRows - 1.0) / sharedRowHeight
+        } else {
+            // Each extra row adds only half a row, so all rows shrink to fit
+            standardNumRows + ((effectiveRowCount - 5) / 2.0).coerceAtLeast(0.0)
+        }
 
         val recommendedHeight = numRows * singularRowHeight + padding.bottom
 
