@@ -13,6 +13,9 @@ import java.io.File
  * The schema is generated into the user directory and reuses the luna_pinyin dictionary that
  * already ships in the Chinese dictionary, converting its pinyin spellings to Zhuyin. luna_pinyin
  * has no tone information, so tones are optional and only act as syllable separators.
+ *
+ * As on desktop Zhuyin keyboards, space types the first tone after a syllable rather than
+ * committing it.
  */
 object ChineseZhuyin {
     const val SchemaId = "futo_zhuyin"
@@ -26,6 +29,11 @@ object ChineseZhuyin {
 
     // Tones 1-4, and Q for the neutral tone (qingsheng)
     private const val ToneKeys = "VWXYQ"
+    private const val FirstToneKey = 'V'
+
+    // Space is also a first tone. RIME's speller only takes it after a symbol, and otherwise
+    // leaves it to commit the composition or type a space
+    private const val FinalKeys = "$ToneKeys "
 
     /** RIME key -> Bopomofo symbol */
     val Transformation: Map<Char, Char> = (SymbolKeys + ToneKeys).zip(Symbols + Tones).toMap()
@@ -46,6 +54,14 @@ object ChineseZhuyin {
         code > UnicodeKeysymOffset -> code - UnicodeKeysymOffset
         else -> code
     }
+
+    /**
+     * The first tone's key, if a space typed after the RIME key [previousKey] types the first
+     * tone, which is the case after a symbol. It stands for the space where only letters are kept,
+     * as in preedit editing
+     */
+    fun firstToneForSpace(previousKey: Int?): Int? =
+        FirstToneKey.code.takeIf { SymbolKeys.any { it.code == previousKey } }
 
     // Spelling rules adapted from https://github.com/rime/rime-bopomofo (zhuyin.yaml)
     private val schema = """
@@ -96,10 +112,12 @@ object ChineseZhuyin {
             - uniquifier
 
         speller:
-          alphabet: $SymbolKeys$ToneKeys
+          alphabet: "$SymbolKeys$FinalKeys"
           initials: $SymbolKeys
-          finals: $ToneKeys
-          delimiter: " '"
+          finals: "$FinalKeys"
+          # Not space, which types the first tone
+          delimiter: "'"
+          use_space: true
           algebra:
             - xform/iu/iou/
             - xform/ui/uei/
@@ -125,14 +143,14 @@ object ChineseZhuyin {
             - xform/eh/E/
             - xform/([iv])e/$1E/
             - abbrev/^([$InitialKeys]).+$/$1/
-        ${ToneKeys.map { "    - derive/^([^$ToneKeys]+)$/$1$it/" }.joinToString("\n        ")}
+        ${FinalKeys.map { "    - \"derive/^([^$FinalKeys]+)$/$1$it/\"" }.joinToString("\n        ")}
 
         translator:
           dictionary: luna_pinyin
           prism: $SchemaId
           preedit_format:
-            - "xlit|$SymbolKeys$ToneKeys|$Symbols$Tones|"
-            - xform/ //
+            - "xlit|$SymbolKeys$FinalKeys|$Symbols${Tones}ˉ|"
+            - "xform/'//"
 
         # Taiwan glyph standard (e.g. 為 instead of 爲), enabled when not simplifying
         futo_zh_tw:
