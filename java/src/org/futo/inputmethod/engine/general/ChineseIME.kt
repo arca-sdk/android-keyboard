@@ -34,8 +34,6 @@ import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
-import kotlinx.coroutines.sync.withPermit
-import kotlinx.coroutines.withContext
 import org.futo.inputmethod.engine.ExpandableSuggestionBarConfiguration
 import org.futo.inputmethod.engine.GlobalIMEMessage
 import org.futo.inputmethod.engine.IMEHelper
@@ -739,8 +737,9 @@ class ChineseIME(val helper: IMEHelper) : IMEInterface, SuggestionStripViewAcces
                 val config = Configuration(schema, learning, simplified, autocorrect, fuzzy)
                 if (config != prevConfiguration) {
                     rimeLoading.value = true
-                    // Zhuyin's dictionary is a few megabytes to read and compare
-                    withContext(Dispatchers.IO) { writeCustomizationFile(config) }
+                    // Kept on the main thread, where clearing the history deletes the directory
+                    // this writes to, so that the two can't overlap
+                    writeCustomizationFile(config)
                     rime.deploy()
 
                     // deploy() returns while RIME is still building in the background, during
@@ -1063,22 +1062,13 @@ class ChineseIME(val helper: IMEHelper) : IMEInterface, SuggestionStripViewAcces
         Log.d(TAG, "Clearing Chinese dictionary...")
 
         coroScope.launch {
-            // Not while a configuration update is writing to or deploying the user directory
-            configSemaphore.withPermit {
-                rime.shutdown()
-                getUser(helper.context).let {
-                    it.deleteRecursively()
-                    it.mkdirs()
-                }
-                rime.startup(false)
-                prevConfiguration = null
+            rime.shutdown()
+            getUser(helper.context).let {
+                it.deleteRecursively()
+                it.mkdirs()
             }
-
-            // An update requested meanwhile was left for whoever held the semaphore
-            if(configUpdatePending) {
-                configUpdatePending = false
-                updateConfig()
-            }
+            rime.startup(false)
+            prevConfiguration = null
         }
     }
 
