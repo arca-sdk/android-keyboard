@@ -539,8 +539,9 @@ class ChineseIME(val helper: IMEHelper) : IMEInterface, SuggestionStripViewAcces
             )
         }.let { ArrayList(it) }
 
-        // Don't flicker an empty suggest bar when editing
-        if(editingState != EditingState.NotEditing && suggestWordList.isEmpty()) {
+        // Don't flicker an empty suggest bar when editing. If there were candidates and all got
+        // filtered, the old ones must still go, as their indices now select other candidates
+        if(editingState != EditingState.NotEditing && cdd.isEmpty()) {
             return@onEach
         }
 
