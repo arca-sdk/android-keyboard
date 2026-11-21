@@ -256,10 +256,21 @@ private object GlyphCoverage {
 
         // Only ideographs are checked, as hasGlyph is also false for e.g. a lone variation selector
         return text.codePoints().allMatch { codePoint ->
-            !Character.isIdeographic(codePoint) || cache.getOrPut(codePoint) {
+            !isHanIdeograph(codePoint) || cache.getOrPut(codePoint) {
                 paint.hasGlyph(String(Character.toChars(codePoint)))
             }
         }
+    }
+
+    // Character.isIdeographic only knows the extensions that existed when the Android version
+    // was released, so the newest ones, which are the least likely to have a glyph, would pass
+    private fun isHanIdeograph(codePoint: Int) = when(codePoint) {
+        in 0x3400..0x4DBF,   // Extension A
+        in 0x4E00..0x9FFF,   // Unified Ideographs
+        in 0xF900..0xFAFF,   // Compatibility Ideographs
+        in 0x20000..0x3FFFF  // Extension B onwards
+            -> true
+        else -> false
     }
 }
 
