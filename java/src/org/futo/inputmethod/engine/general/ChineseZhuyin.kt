@@ -1,5 +1,6 @@
 package org.futo.inputmethod.engine.general
 
+import android.content.Context
 import java.io.File
 
 /**
@@ -10,15 +11,21 @@ import java.io.File
  * the Dachen keys (1qaz2wsx...) so that digits and punctuation typed from the symbols layout keep
  * behaving as they do for Pinyin, and so that preedit editing (which only accepts letters) works.
  *
- * The schema is generated into the user directory and reuses the luna_pinyin dictionary that
- * already ships in the Chinese dictionary, converting its pinyin spellings to Zhuyin. luna_pinyin
- * has no tone information, so tones are optional and only act as syllable separators.
+ * The schema is generated into the user directory, converting the pinyin spellings of its
+ * dictionary to Zhuyin. The luna_pinyin dictionary used for Pinyin has no tones, so the bundled
+ * terra_pinyin is used instead, which makes a typed tone narrow the candidates down to the
+ * characters read with it. A syllable typed without a tone matches all of them.
  *
  * As on desktop Zhuyin keyboards, space types the first tone after a syllable rather than
  * committing it.
  */
 object ChineseZhuyin {
     const val SchemaId = "futo_zhuyin"
+
+    // Spells syllables as pinyin followed by the tone's number, 5 being the neutral tone
+    private const val DictionaryId = "terra_pinyin"
+    private const val DictionaryFile = "$DictionaryId.dict.yaml"
+    private const val DictionaryAsset = "rime/$DictionaryFile"
 
     private const val Symbols = "ㄅㄆㄇㄈㄉㄊㄋㄌㄍㄎㄏㄐㄑㄒㄓㄔㄕㄖㄗㄘㄙㄧㄨㄩㄚㄛㄜㄝㄞㄟㄠㄡㄢㄣㄤㄥㄦ"
     private const val Tones = "ˉˊˇˋ˙"
@@ -73,9 +80,9 @@ object ChineseZhuyin {
         schema:
           schema_id: $SchemaId
           name: 注音
-          version: "1"
+          version: "2"
           description: |
-            Zhuyin (Bopomofo) input based on the Luna Pinyin dictionary.
+            Zhuyin (Bopomofo) input based on the Terra Pinyin dictionary.
 
         switches:
           - name: ascii_mode
@@ -119,6 +126,8 @@ object ChineseZhuyin {
           delimiter: "'"
           use_space: true
           algebra:
+            - xform/^m(\d)$/mu$1/
+            - xform/^r5$/er5/
             - xform/iu/iou/
             - xform/ui/uei/
             - xform/ong/ung/
@@ -143,10 +152,14 @@ object ChineseZhuyin {
             - xform/eh/E/
             - xform/([iv])e/$1E/
             - abbrev/^([$InitialKeys]).+$/$1/
-        ${FinalKeys.map { "    - \"derive/^([^$FinalKeys]+)$/$1$it/\"" }.joinToString("\n        ")}
+            # Without its tone, a syllable matches all of them
+            - derive/^([A-Za-z]+)\d$/$1/
+            - abbrev/^([$InitialKeys]).+(\d)$/$1$2/
+            - xlit/12345/$ToneKeys/
+            - "derive/$FirstToneKey$/ /"
 
         translator:
-          dictionary: luna_pinyin
+          dictionary: $DictionaryId
           prism: $SchemaId
           preedit_format:
             - "xlit|$SymbolKeys$FinalKeys|$Symbols${Tones}ˉ|"
@@ -179,16 +192,20 @@ object ChineseZhuyin {
                 - schema: $SchemaId
     """.trimIndent() + "\n"
 
-    /** Writes the schema to RIME's user directory, only touching files whose content changed */
-    fun writeSchemaFiles(userDir: File) {
+    /**
+     * Writes the schema and its dictionary to RIME's user directory, only touching files whose
+     * content changed
+     */
+    fun writeSchemaFiles(context: Context, userDir: File) {
         if(!userDir.isDirectory) return
 
         listOf(
-            File(userDir, "$SchemaId.schema.yaml") to schema,
-            File(userDir, "default.custom.yaml") to defaultCustomization
+            File(userDir, "$SchemaId.schema.yaml") to schema.toByteArray(),
+            File(userDir, "default.custom.yaml") to defaultCustomization.toByteArray(),
+            File(userDir, DictionaryFile) to context.assets.open(DictionaryAsset).use { it.readBytes() }
         ).forEach { (file, content) ->
-            if(!file.exists() || file.readText() != content) {
-                file.writeText(content)
+            if(!file.exists() || !file.readBytes().contentEquals(content)) {
+                file.writeBytes(content)
             }
         }
     }

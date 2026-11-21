@@ -34,6 +34,7 @@ import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.withContext
 import org.futo.inputmethod.engine.ExpandableSuggestionBarConfiguration
 import org.futo.inputmethod.engine.GlobalIMEMessage
 import org.futo.inputmethod.engine.IMEHelper
@@ -631,7 +632,7 @@ class ChineseIME(val helper: IMEHelper) : IMEInterface, SuggestionStripViewAcces
     private fun writeCustomizationFile(cfg: Configuration) {
         val schema = cfg.schema
         val isZhuyinSchema = schema == ChineseZhuyin.SchemaId
-        if(isZhuyinSchema) ChineseZhuyin.writeSchemaFiles(getUser(helper.context))
+        if(isZhuyinSchema) ChineseZhuyin.writeSchemaFiles(helper.context, getUser(helper.context))
 
         val file = File(getUser(helper.context), "${schema}.custom.yaml")
         val content = buildString {
@@ -737,7 +738,8 @@ class ChineseIME(val helper: IMEHelper) : IMEInterface, SuggestionStripViewAcces
                 val config = Configuration(schema, learning, simplified, autocorrect, fuzzy)
                 if (config != prevConfiguration) {
                     rimeLoading.value = true
-                    writeCustomizationFile(config)
+                    // Zhuyin's dictionary is a few megabytes to read and compare
+                    withContext(Dispatchers.IO) { writeCustomizationFile(config) }
                     rime.deploy()
 
                     // deploy() returns while RIME is still building in the background, during
