@@ -631,7 +631,7 @@ class ChineseIME(val helper: IMEHelper) : IMEInterface, SuggestionStripViewAcces
     private fun writeCustomizationFile(cfg: Configuration) {
         val schema = cfg.schema
         val isZhuyinSchema = schema == ChineseZhuyin.SchemaId
-        if(isZhuyinSchema) ChineseZhuyin.writeSchemaFiles(getUser(helper.context))
+        if(isZhuyinSchema) ChineseZhuyin.writeSchemaFiles(helper.context, getUser(helper.context))
 
         val file = File(getUser(helper.context), "${schema}.custom.yaml")
         val content = buildString {
@@ -737,6 +737,8 @@ class ChineseIME(val helper: IMEHelper) : IMEInterface, SuggestionStripViewAcces
                 val config = Configuration(schema, learning, simplified, autocorrect, fuzzy)
                 if (config != prevConfiguration) {
                     rimeLoading.value = true
+                    // Kept on the main thread, where clearing the history deletes the directory
+                    // this writes to, so that the two can't overlap
                     writeCustomizationFile(config)
                     rime.deploy()
 
