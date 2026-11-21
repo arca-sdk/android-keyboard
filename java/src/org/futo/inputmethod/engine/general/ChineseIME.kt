@@ -2,6 +2,7 @@ package org.futo.inputmethod.engine.general
 
 import android.content.Context
 import android.graphics.Paint
+import android.graphics.Typeface
 import android.os.SystemClock
 import android.util.Log
 import android.view.KeyCharacterMap
@@ -236,17 +237,28 @@ class InputKeeper() {
 }
 
 /**
- * The dictionaries include rare CJK extension characters that the system fonts often can't draw,
- * which would otherwise show up as boxes in the candidates
+ * The dictionaries include rare CJK extension characters that the fonts often can't draw, which
+ * would otherwise show up as boxes in the candidates
  */
 private object GlyphCoverage {
     private val paint = Paint()
     private val cache = mutableMapOf<Int, Boolean>()
 
-    // Only ideographs are checked, as hasGlyph is also false for e.g. a lone variation selector
-    fun canRender(text: String): Boolean = text.codePoints().allMatch { codePoint ->
-        !Character.isIdeographic(codePoint) || cache.getOrPut(codePoint) {
-            paint.hasGlyph(String(Character.toChars(codePoint)))
+    /**
+     * [typeface] is the font the candidates are drawn with, or null for the default one. The
+     * system fonts it falls back to are checked too.
+     */
+    fun canRender(text: String, typeface: Typeface?): Boolean {
+        if(paint.typeface != typeface) {
+            paint.typeface = typeface
+            cache.clear()
+        }
+
+        // Only ideographs are checked, as hasGlyph is also false for e.g. a lone variation selector
+        return text.codePoints().allMatch { codePoint ->
+            !Character.isIdeographic(codePoint) || cache.getOrPut(codePoint) {
+                paint.hasGlyph(String(Character.toChars(codePoint)))
+            }
         }
     }
 }
@@ -499,8 +511,9 @@ class ChineseIME(val helper: IMEHelper) : IMEInterface, SuggestionStripViewAcces
         }
 
         // Filtered after indexing, as the index is what selects the candidate in RIME
+        val typeface = helper.themeTypeface
         val suggestWordList = cdd.mapIndexedNotNull { index, candidate ->
-            if(!GlyphCoverage.canRender(candidate.text)) return@mapIndexedNotNull null
+            if(!GlyphCoverage.canRender(candidate.text, typeface)) return@mapIndexedNotNull null
 
             SuggestedWordInfo(
                 candidate.text,
