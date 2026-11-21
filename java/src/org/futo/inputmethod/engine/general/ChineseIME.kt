@@ -34,6 +34,7 @@ import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import org.futo.inputmethod.engine.ExpandableSuggestionBarConfiguration
 import org.futo.inputmethod.engine.GlobalIMEMessage
@@ -1062,13 +1063,22 @@ class ChineseIME(val helper: IMEHelper) : IMEInterface, SuggestionStripViewAcces
         Log.d(TAG, "Clearing Chinese dictionary...")
 
         coroScope.launch {
-            rime.shutdown()
-            getUser(helper.context).let {
-                it.deleteRecursively()
-                it.mkdirs()
+            // Not while a configuration update is writing to or deploying the user directory
+            configSemaphore.withPermit {
+                rime.shutdown()
+                getUser(helper.context).let {
+                    it.deleteRecursively()
+                    it.mkdirs()
+                }
+                rime.startup(false)
+                prevConfiguration = null
             }
-            rime.startup(false)
-            prevConfiguration = null
+
+            // An update requested meanwhile was left for whoever held the semaphore
+            if(configUpdatePending) {
+                configUpdatePending = false
+                updateConfig()
+            }
         }
     }
 
