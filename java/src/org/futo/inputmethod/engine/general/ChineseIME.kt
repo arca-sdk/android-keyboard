@@ -1,6 +1,8 @@
 package org.futo.inputmethod.engine.general
 
 import android.content.Context
+import android.graphics.Paint
+import android.graphics.Typeface
 import android.os.SystemClock
 import android.util.Log
 import android.view.KeyCharacterMap
@@ -231,6 +233,44 @@ class InputKeeper() {
 
     fun replace(with: String) {
         text = with
+    }
+}
+
+/**
+ * The dictionaries include rare CJK extension characters that the fonts often can't draw, which
+ * would otherwise show up as boxes in the candidates
+ */
+private object GlyphCoverage {
+    private val paint = Paint()
+    private val cache = mutableMapOf<Int, Boolean>()
+
+    /**
+     * [typeface] is the font the candidates are drawn with, or null for the default one. The
+     * system fonts it falls back to are checked too.
+     */
+    fun canRender(text: String, typeface: Typeface?): Boolean {
+        if(paint.typeface != typeface) {
+            paint.typeface = typeface
+            cache.clear()
+        }
+
+        // Only ideographs are checked, as hasGlyph is also false for e.g. a lone variation selector
+        return text.codePoints().allMatch { codePoint ->
+            !isHanIdeograph(codePoint) || cache.getOrPut(codePoint) {
+                paint.hasGlyph(String(Character.toChars(codePoint)))
+            }
+        }
+    }
+
+    // Character.isIdeographic only knows the extensions that existed when the Android version
+    // was released, so the newest ones, which are the least likely to have a glyph, would pass
+    private fun isHanIdeograph(codePoint: Int) = when(codePoint) {
+        in 0x3400..0x4DBF,   // Extension A
+        in 0x4E00..0x9FFF,   // Unified Ideographs
+        in 0xF900..0xFAFF,   // Compatibility Ideographs
+        in 0x20000..0x3FFFF  // Extension B onwards
+            -> true
+        else -> false
     }
 }
 
@@ -481,20 +521,27 @@ class ChineseIME(val helper: IMEHelper) : IMEInterface, SuggestionStripViewAcces
             }
         }
 
-        val suggestWordList = cdd.mapIndexed { index, candidate -> SuggestedWordInfo(
-            candidate.text,
-            "",
-            Int.MAX_VALUE - index,
-            1,
-            null,
-            SuggestedWordInfo.NOT_AN_INDEX,
-            SuggestedWordInfo.NOT_A_CONFIDENCE,
-            index,
-            candidate.comment
-        ) }.let { ArrayList(it) }
+        // Filtered after indexing, as the index is what selects the candidate in RIME
+        val typeface = helper.themeTypeface
+        val suggestWordList = cdd.mapIndexedNotNull { index, candidate ->
+            if(!GlyphCoverage.canRender(candidate.text, typeface)) return@mapIndexedNotNull null
 
-        // Don't flicker an empty suggest bar when editing
-        if(editingState != EditingState.NotEditing && suggestWordList.isEmpty()) {
+            SuggestedWordInfo(
+                candidate.text,
+                "",
+                Int.MAX_VALUE - index,
+                1,
+                null,
+                SuggestedWordInfo.NOT_AN_INDEX,
+                SuggestedWordInfo.NOT_A_CONFIDENCE,
+                index,
+                candidate.comment
+            )
+        }.let { ArrayList(it) }
+
+        // Don't flicker an empty suggest bar when editing. If there were candidates and all got
+        // filtered, the old ones must still go, as their indices now select other candidates
+        if(editingState != EditingState.NotEditing && cdd.isEmpty()) {
             return@onEach
         }
 

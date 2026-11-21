@@ -2,6 +2,7 @@ package org.futo.inputmethod.engine
 
 import android.content.Context
 import android.graphics.Rect
+import android.graphics.Typeface
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputConnection
 import androidx.lifecycle.LifecycleCoroutineScope
@@ -49,6 +50,10 @@ class IMEHelper(
             val kb = latinIME.latinIMELegacy.mKeyboardSwitcher.keyboard
             return Rect(0, 0, kb?.mBaseWidth ?: 1, kb?.mBaseHeight ?: 1)
         }
+
+    /** The theme's font, which candidates are drawn with, or null when it uses the default one */
+    public val themeTypeface: Typeface?
+        get() = latinIME.colorScheme.extended.advancedThemeOptions.font
 
     public fun updateBoostedCodePoints(codes: Set<Int>?) {
         latinIME.latinIMELegacy.mKeyboardSwitcher?.mainKeyboardView?.mKeyDetector?.let {
