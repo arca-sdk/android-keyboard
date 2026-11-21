@@ -1,6 +1,7 @@
 package org.futo.inputmethod.engine.general
 
 import android.content.Context
+import android.graphics.Paint
 import android.os.SystemClock
 import android.util.Log
 import android.view.KeyCharacterMap
@@ -231,6 +232,22 @@ class InputKeeper() {
 
     fun replace(with: String) {
         text = with
+    }
+}
+
+/**
+ * The dictionaries include rare CJK extension characters that the system fonts often can't draw,
+ * which would otherwise show up as boxes in the candidates
+ */
+private object GlyphCoverage {
+    private val paint = Paint()
+    private val cache = mutableMapOf<Int, Boolean>()
+
+    // Only ideographs are checked, as hasGlyph is also false for e.g. a lone variation selector
+    fun canRender(text: String): Boolean = text.codePoints().allMatch { codePoint ->
+        !Character.isIdeographic(codePoint) || cache.getOrPut(codePoint) {
+            paint.hasGlyph(String(Character.toChars(codePoint)))
+        }
     }
 }
 
@@ -481,17 +498,22 @@ class ChineseIME(val helper: IMEHelper) : IMEInterface, SuggestionStripViewAcces
             }
         }
 
-        val suggestWordList = cdd.mapIndexed { index, candidate -> SuggestedWordInfo(
-            candidate.text,
-            "",
-            Int.MAX_VALUE - index,
-            1,
-            null,
-            SuggestedWordInfo.NOT_AN_INDEX,
-            SuggestedWordInfo.NOT_A_CONFIDENCE,
-            index,
-            candidate.comment
-        ) }.let { ArrayList(it) }
+        // Filtered after indexing, as the index is what selects the candidate in RIME
+        val suggestWordList = cdd.mapIndexedNotNull { index, candidate ->
+            if(!GlyphCoverage.canRender(candidate.text)) return@mapIndexedNotNull null
+
+            SuggestedWordInfo(
+                candidate.text,
+                "",
+                Int.MAX_VALUE - index,
+                1,
+                null,
+                SuggestedWordInfo.NOT_AN_INDEX,
+                SuggestedWordInfo.NOT_A_CONFIDENCE,
+                index,
+                candidate.comment
+            )
+        }.let { ArrayList(it) }
 
         // Don't flicker an empty suggest bar when editing
         if(editingState != EditingState.NotEditing && suggestWordList.isEmpty()) {
