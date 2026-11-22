@@ -185,13 +185,6 @@ object ChineseZhuyin {
           - $SchemaId.custom:/patch?
     """.trimIndent() + "\n"
 
-    // Only listed schemas get deployed
-    private val defaultCustomization = """
-        patch:
-            schema_list/+:
-                - schema: $SchemaId
-    """.trimIndent() + "\n"
-
     /**
      * Writes the schema and its dictionary to RIME's user directory, only touching files whose
      * content changed
@@ -201,12 +194,9 @@ object ChineseZhuyin {
 
         listOf(
             File(userDir, "$SchemaId.schema.yaml") to schema.toByteArray(),
-            File(userDir, "default.custom.yaml") to defaultCustomization.toByteArray(),
             File(userDir, DictionaryFile) to context.assets.open(DictionaryAsset).use { it.readBytes() }
-        ).forEach { (file, content) ->
-            if(!file.exists() || !file.readBytes().contentEquals(content)) {
-                file.writeBytes(content)
-            }
-        }
+        ).forEach { (file, content) -> ChineseGeneratedSchemas.writeIfChanged(file, content) }
+
+        ChineseGeneratedSchemas.updateSchemaList(userDir)
     }
 }
