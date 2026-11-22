@@ -8,6 +8,8 @@ import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -17,7 +19,13 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import org.futo.inputmethod.engine.GlobalIMEMessage
 import org.futo.inputmethod.engine.IMEMessage
@@ -49,8 +57,13 @@ object ChineseBoshiamy {
     const val CodeKeys = "abcdefghijklmnopqrstuvwxyz,.'[]"
     private const val MaxCodeLength = 5
 
-    // The four official tables are 0.5 to 1.3 MB
+    // The four official tables are 0.5 to 1.3 MB, with up to 40,000 entries of one or two
+    // characters. The database could still list far more rows than it stores, e.g. from a view
     private const val MaxImportSize = 32L * 1024L * 1024L
+    private const val MaxEntries = 200_000
+    private const val MaxTextLength = 16
+
+    private const val TempSuffix = ".tmp"
 
     private const val TableNamePrefix = "# table: "
     private const val TableEntriesPrefix = "# entries: "
@@ -58,6 +71,12 @@ object ChineseBoshiamy {
     data class TableInfo(val name: String, val entries: Int)
 
     class InvalidTableException : Exception("Not an ibus-table database with Boshiamy codes")
+
+    // Imports and removals replace the same table, so they run one at a time, and outlive the
+    // settings page that started them
+    private val tableLock = Mutex()
+    private val pendingImports = MutableStateFlow(0)
+    val importsInProgress: StateFlow<Int> = pendingImports.asStateFlow()
 
     private val schema = """
         # Rime schema
@@ -168,7 +187,8 @@ object ChineseBoshiamy {
     private fun isValidEntry(code: String?, text: String?) =
         code != null && text != null
                 && code.length in 1..MaxCodeLength && code.all { it in CodeKeys }
-                && text.isNotBlank() && text.none { it.isISOControl() }
+                && text.isNotBlank() && text.length <= MaxTextLength
+                && text.none { it.isISOControl() }
 
     private fun readAttribute(db: SQLiteDatabase, attribute: String): String? = try {
         db.rawQuery("SELECT val FROM ime WHERE attr = ?", arrayOf(attribute)).use {
@@ -178,10 +198,14 @@ object ChineseBoshiamy {
         null
     }
 
-    private fun convertTable(database: File, destination: File): TableInfo {
+    /**
+     * Converts [database] into [destination], using [body] to hold the entries while they are
+     * counted for the header
+     */
+    private fun convertTable(database: File, destination: File, body: File): TableInfo {
         // Read only, and without the collators Android would otherwise set up by writing to it
         val flags = SQLiteDatabase.OPEN_READONLY or SQLiteDatabase.NO_LOCALIZED_COLLATORS
-        return SQLiteDatabase.openDatabase(database.path, null, flags).use { db ->
+        val (name, entries) = SQLiteDatabase.openDatabase(database.path, null, flags).use { db ->
             val name = listOfNotNull(
                 readAttribute(db, "name.zh_tw") ?: readAttribute(db, "name"),
                 readAttribute(db, "serial_number")
@@ -190,51 +214,72 @@ object ChineseBoshiamy {
             }.ifBlank { "?" }
 
             // Candidates of a code are listed in the order they are in the dictionary
-            val query = "SELECT tabkeys, phrase FROM phrases ORDER BY tabkeys, freq DESC, rowid"
-            val entries = db.rawQuery(query, null).use { cursor ->
-                buildList {
+            val query = "SELECT tabkeys, phrase FROM phrases ORDER BY tabkeys, freq DESC, rowid " +
+                    "LIMIT ${MaxEntries + 1}"
+            var entries = 0
+            db.rawQuery(query, null).use { cursor ->
+                body.bufferedWriter().use { writer ->
                     while(cursor.moveToNext()) {
                         val code = cursor.getString(0)
                         val text = cursor.getString(1)
-                        if(isValidEntry(code, text)) add(text to code)
+                        if(!isValidEntry(code, text)) continue
+
+                        entries += 1
+                        if(entries > MaxEntries) throw InvalidTableException()
+
+                        writer.write(text)
+                        writer.write("\t")
+                        writer.write(code)
+                        writer.write("\n")
                     }
                 }
             }
 
-            if(entries.isEmpty()) throw InvalidTableException()
-
-            val info = TableInfo(name, entries.size)
-            destination.bufferedWriter().use { writer ->
-                writer.write(dictionaryHeader(info))
-                entries.forEach { (text, code) ->
-                    writer.write(text)
-                    writer.write("\t")
-                    writer.write(code)
-                    writer.write("\n")
-                }
-            }
-
-            info
+            name to entries
         }
+
+        if(entries == 0) throw InvalidTableException()
+
+        val info = TableInfo(name, entries)
+        destination.outputStream().use { output ->
+            output.write(dictionaryHeader(info).toByteArray())
+            body.inputStream().use { it.copyTo(output) }
+        }
+
+        return info
     }
 
     /**
      * Converts the ibus-table database at [uri] and keeps it as the table to type with, replacing
-     * the previous one. Reads and writes files, so it must not be called on the main thread.
+     * the previous one. Imports and removals that are already running finish first.
      *
      * @throws InvalidTableException if the file isn't a table
      */
     @Throws(IOException::class, InvalidTableException::class)
-    fun importTable(context: Context, uri: Uri): TableInfo {
+    suspend fun importTable(context: Context, uri: Uri): TableInfo = withContext(Dispatchers.IO) {
+        pendingImports.update { it + 1 }
+        try {
+            tableLock.withLock { importTableLocked(context, uri) }
+        } finally {
+            pendingImports.update { it - 1 }
+        }
+    }
+
+    private fun importTableLocked(context: Context, uri: Uri): TableInfo {
         val table = tableFile(context)
         val directory = table.parentFile ?: throw IOException("No directory for the table")
         if(!directory.isDirectory && !directory.mkdirs()) {
             throw IOException("Failed to create the table directory")
         }
 
+        // Left by an import that didn't finish, e.g. when the app was killed
+        directory.listFiles { file -> file.name.endsWith(TempSuffix) }?.forEach { it.delete() }
+
         // SQLite needs a file to open, and deletes the ones it finds to be corrupt
         val database = File.createTempFile("boshiamy", ".db", context.cacheDir)
-        val converted = File(directory, "$DictionaryFile.tmp")
+        // In the table's directory, so that renaming it into place doesn't cross file systems
+        val converted = File.createTempFile("boshiamy", TempSuffix, directory)
+        val body = File.createTempFile("boshiamy", TempSuffix, directory)
         try {
             val input = context.contentResolver.openInputStream(uri)
                 ?: throw IOException("Failed to open the picked file")
@@ -254,7 +299,7 @@ object ChineseBoshiamy {
             }
 
             val info = try {
-                convertTable(database, converted)
+                convertTable(database, converted, body)
             } catch(e: SQLiteException) {
                 // e.g. not a database, or one without the tables of ibus-table
                 throw InvalidTableException()
@@ -265,11 +310,12 @@ object ChineseBoshiamy {
         } finally {
             database.delete()
             converted.delete()
+            body.delete()
         }
     }
 
-    fun removeTable(context: Context) {
-        tableFile(context).delete()
+    suspend fun removeTable(context: Context) = withContext(Dispatchers.IO) {
+        tableLock.withLock { tableFile(context).delete() }
     }
 
     /**
@@ -297,21 +343,24 @@ fun ChineseBoshiamyTableSetting() {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
+    val importing = ChineseBoshiamy.importsInProgress.collectAsState().value > 0
     var table by remember { mutableStateOf(ChineseBoshiamy.tableInfo(context)) }
-    var importing by remember { mutableStateOf(false) }
+
+    // Also picks up an import started from an earlier visit to this page
+    LaunchedEffect(importing) {
+        if(!importing) table = ChineseBoshiamy.tableInfo(context)
+    }
 
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         uri ?: return@rememberLauncherForActivityResult
 
-        importing = true
         scope.launch {
             // Not cancelled by leaving the screen, so that a stored table always gets loaded
-            val result = withContext(Dispatchers.IO + NonCancellable) {
+            val result = withContext(NonCancellable) {
                 runCatching { ChineseBoshiamy.importTable(context.applicationContext, uri) }
                     .onSuccess { GlobalIMEMessage.tryEmit(IMEMessage.ReloadResources) }
             }
 
-            importing = false
             result.onSuccess { table = it }.onFailure {
                 val message = when(it) {
                     is ChineseBoshiamy.InvalidTableException ->
@@ -343,9 +392,13 @@ fun ChineseBoshiamyTableSetting() {
             title = stringResource(R.string.chinese_setting_boshiamy_table_remove),
             style = NavigationItemStyle.MiscNoArrow,
             navigate = {
-                ChineseBoshiamy.removeTable(context)
                 table = null
-                GlobalIMEMessage.tryEmit(IMEMessage.ReloadResources)
+                scope.launch {
+                    withContext(NonCancellable) {
+                        ChineseBoshiamy.removeTable(context.applicationContext)
+                        GlobalIMEMessage.tryEmit(IMEMessage.ReloadResources)
+                    }
+                }
             }
         )
     }

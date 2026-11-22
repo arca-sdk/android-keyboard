@@ -60,14 +60,17 @@ val NoOpPreEditListener = object : PreEditListener {
 data class FloatingPreEdit(
     val entries: List<PreEditEntry>,
     val transformation: Map<Char, Char>,
-    val listener: PreEditListener
+    val listener: PreEditListener,
+    // Accepted for editing besides letters and spaces
+    val editableKeys: String = ""
 ) {
     companion object {
         @JvmStatic
-        fun build(text: String, listener: PreEditListener, transformation: Map<Char, Char>, normalized: String) = FloatingPreEdit(
+        fun build(text: String, listener: PreEditListener, transformation: Map<Char, Char>, normalized: String, editableKeys: String = "") = FloatingPreEdit(
             entries = listOfNotNull(text.ifBlank { null }?.let { PreEditEntry(it, normalized, true) }),
             transformation = transformation,
             listener = listener,
+            editableKeys = editableKeys,
         )
     }
     private val reverseTransformation = transformation.toList().associate { it.second to it.first }
@@ -155,7 +158,7 @@ fun FloatingPreEditView(
             .background(Color.Companion.Gray.copy(alpha = 0.7f))
             .clickable {
                 // Reject editing if there are already any Chinese characters in here. Only Pinyin editing supported
-                if (preedit.entries.all { it.normalized.all { it in 'a'..'z' || it in 'A'..'Z' || it == ' ' } }) {
+                if (preedit.entries.all { it.normalized.all { it in 'a'..'z' || it in 'A'..'Z' || it == ' ' || it in preedit.editableKeys } }) {
                     preedit.listener.onStartEdit()
                     editing.value = true
                     editingText.value =

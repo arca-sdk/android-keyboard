@@ -33,7 +33,9 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withLock
 import org.futo.inputmethod.engine.ExpandableSuggestionBarConfiguration
 import org.futo.inputmethod.engine.GlobalIMEMessage
 import org.futo.inputmethod.engine.IMEHelper
@@ -300,6 +302,9 @@ class ChineseIME(val helper: IMEHelper) : IMEInterface, SuggestionStripViewAcces
     private val isBoshiamyTableMissing get() =
         isBoshiamy && !ChineseBoshiamy.hasTable(helper.context)
 
+    // Keys the preedit editor accepts besides letters
+    private val editableKeys get() = if(isBoshiamy) ChineseBoshiamy.CodeKeys else ""
+
     private val currentTransformation get() = when(layoutHint) {
         "stroke" -> StrokeTransformation
         "zhuyin" -> ChineseZhuyin.Transformation
@@ -451,8 +456,14 @@ class ChineseIME(val helper: IMEHelper) : IMEInterface, SuggestionStripViewAcces
         val notEditing = editingState == EditingState.NotEditing
         if(ped.isEmpty() && notEditing) { rawInput.clear() }
 
+        // Boshiamy's preedit is the code as typed. Typing past a full code commits it and starts
+        // the next one in the same key, so the raw input wouldn't be cleared in between
+        if(isBoshiamy && notEditing) rawInput.replace(ped.filter { it in ChineseBoshiamy.CodeKeys })
+
         helper.updateUiInputState(ped.isEmpty() && notEditing)
-        helper.setPreedit(FloatingPreEdit.build(ped, this, currentTransformation, rawInput.text))
+        helper.setPreedit(
+            FloatingPreEdit.build(ped, this, currentTransformation, rawInput.text, editableKeys)
+        )
 
         // Shown from here, as the candidates stay empty and so don't get updated
         if(isBoshiamyTableMissing) showBoshiamyTableNotice(ped.isNotEmpty())
@@ -481,10 +492,12 @@ class ChineseIME(val helper: IMEHelper) : IMEInterface, SuggestionStripViewAcces
         editingState = EditingState.Editing
     }
 
-    // This assumes that the only valid characters for input simulation are ASCII letters
-    // In particular, some characters like space will break the input by ending composition
-    // (Maybe there are other valid symbols potentially?)
+    // This assumes that the only valid characters for input simulation are ASCII letters, and
+    // Boshiamy's code keys. In particular, some characters like space will break the input by
+    // ending composition (Maybe there are other valid symbols potentially?)
     private fun safeguardInputStringForSimulation(input: String): String {
+        if(isBoshiamy) return input.lowercase().filter { it in ChineseBoshiamy.CodeKeys }
+
         var string = input
         string = string.filter { it in 'a'..'z' || it in 'A'..'Z' }
         return string
@@ -606,6 +619,10 @@ class ChineseIME(val helper: IMEHelper) : IMEInterface, SuggestionStripViewAcces
                         rime.shutdown()
                         rime.startup(false)
                         prevConfiguration = null
+
+                        // e.g. a Boshiamy table imported while typing, which only gets copied
+                        // to RIME's user directory and deployed by a configuration update
+                        updateConfig()
                     }
                     else -> {}
                 }
@@ -873,6 +890,10 @@ class ChineseIME(val helper: IMEHelper) : IMEInterface, SuggestionStripViewAcces
      * Space types the first character of the code. RIME would type the letters of a code that has
      * none, which is left to be corrected instead, as on desktop
      */
+    // Keys reach RIME in the order they were typed, including a Boshiamy space, which takes
+    // several calls
+    private val keyLock = Mutex()
+
     private suspend fun processBoshiamySpace() {
         val code = rime.getPreedit().filter { it in ChineseBoshiamy.CodeKeys }
         if(code.isNotEmpty() && rime.getCandidates().isEmpty()) {
@@ -958,9 +979,9 @@ class ChineseIME(val helper: IMEHelper) : IMEInterface, SuggestionStripViewAcces
                     }
 
                     if(isBoshiamy && x11Code == ' '.code) {
-                        coroScope.launch { processBoshiamySpace() }
+                        coroScope.launch { keyLock.withLock { processBoshiamySpace() } }
                     } else {
-                        coroScope.launch { rime.processX11Code(x11Code) }
+                        coroScope.launch { keyLock.withLock { rime.processX11Code(x11Code) } }
                     }
                 } else {
                     // Spaces are dropped when the edited preedit is replayed, so type the tone
