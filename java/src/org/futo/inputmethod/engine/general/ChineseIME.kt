@@ -32,6 +32,7 @@ import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.yield
 import org.futo.inputmethod.engine.ExpandableSuggestionBarConfiguration
 import org.futo.inputmethod.engine.GlobalIMEMessage
 import org.futo.inputmethod.engine.IMEHelper
@@ -624,6 +625,11 @@ class ChineseIME(val helper: IMEHelper) : IMEInterface, SuggestionStripViewAcces
     private var configUpdatePending = false
     private var selectSchemaTimedOut = false
 
+    // Clearing the history deletes RIME's user directory, which also holds the configuration, so
+    // it's done by the next configuration update. That way it can't happen while an update writes
+    // there and deploys, and the configuration is written again right after
+    private var userDataClearPending = false
+
     // RIME rejects input while deploying, so keys typed meanwhile are typed once it's done. Only
     // keypresses are held, as they all go through RIME and so are replayed in order
     private val keysWhileLoading = mutableListOf<Event>()
@@ -639,6 +645,15 @@ class ChineseIME(val helper: IMEHelper) : IMEInterface, SuggestionStripViewAcces
             try {
                 // Checked within try, so that a loading state from a previous update still ends
                 if(editingState.active) return@launch
+
+                if(userDataClearPending) {
+                    // Keys typed meanwhile are held, and typed once the configuration is applied
+                    rimeLoading.value = true
+                    clearUserData()
+
+                    // Otherwise it's applied when the IME is next started
+                    if(!helper.isImeActive(this@ChineseIME)) return@launch
+                }
 
                 val settings = Settings.getInstance().current
                 val locale = settings.mLocale
@@ -1012,15 +1027,26 @@ class ChineseIME(val helper: IMEHelper) : IMEInterface, SuggestionStripViewAcces
     override fun clearUserHistoryDictionaries() {
         Log.d(TAG, "Clearing Chinese dictionary...")
 
-        coroScope.launch {
-            rime.shutdown()
-            getUser(helper.context).let {
-                it.deleteRecursively()
-                it.mkdirs()
-            }
-            rime.startup(false)
-            prevConfiguration = null
+        userDataClearPending = true
+        updateConfig()
+    }
+
+    // Only called by updateConfig, so that no other configuration update runs meanwhile
+    private suspend fun clearUserData() {
+        userDataClearPending = false
+
+        // RIME is shut down from this thread rather than its own, and crashes if it's still busy
+        // then. So first let the input already sent to it through, as keys are held from now on
+        yield()
+        rime.clearComposition()
+
+        rime.shutdown()
+        getUser(helper.context).let {
+            it.deleteRecursively()
+            it.mkdirs()
         }
+        rime.startup(false)
+        prevConfiguration = null
     }
 
     override fun onStartBatchInput() {}
