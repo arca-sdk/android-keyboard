@@ -677,6 +677,15 @@
     <string name="chinese_setting_simplification_force_traditional">Traditional</string>
     <string name="chinese_setting_pinyin_scheme">Pinyin Scheme</string>
     <string name="chinese_setting_fuzzy_pinyin">Fuzzy Pinyin</string>
+    <string name="chinese_setting_boshiamy_table">Boshiamy table</string>
+    <string name="chinese_setting_boshiamy_table_missing">Not imported. Tap to pick your own table file for IBus, such as boshiamy_t.db</string>
+    <string name="chinese_setting_boshiamy_table_imported">%1$s, %2$d entries. Tap to replace it</string>
+    <string name="chinese_setting_boshiamy_table_importing">Importing…</string>
+    <string name="chinese_setting_boshiamy_table_remove">Remove Boshiamy table</string>
+    <string name="chinese_setting_boshiamy_table_invalid">That file isn\'t a Boshiamy table for IBus</string>
+    <string name="chinese_setting_boshiamy_table_failed">Couldn\'t import the table</string>
+    <!-- Shown in place of the candidates when typing in Boshiamy without a table. Kept short, as it gets cut off -->
+    <string name="chinese_boshiamy_table_missing_notice">Import Boshiamy table</string>
 
     <!-- Specific to Japanese input method -->
     <string name="japanese_settings_title">Japanese Input Settings</string>
