@@ -217,15 +217,20 @@ object ChineseBoshiamy {
             val query = "SELECT tabkeys, phrase FROM phrases ORDER BY tabkeys, freq DESC, rowid " +
                     "LIMIT ${MaxEntries + 1}"
             var entries = 0
+            var rows = 0
             db.rawQuery(query, null).use { cursor ->
                 body.bufferedWriter().use { writer ->
                     while(cursor.moveToNext()) {
+                        // Counting the rows rather than the entries, as the limit leaves out the
+                        // rest of the table, which shouldn't be stored as if it were complete
+                        rows += 1
+                        if(rows > MaxEntries) throw InvalidTableException()
+
                         val code = cursor.getString(0)
                         val text = cursor.getString(1)
                         if(!isValidEntry(code, text)) continue
 
                         entries += 1
-                        if(entries > MaxEntries) throw InvalidTableException()
 
                         writer.write(text)
                         writer.write("\t")
@@ -325,8 +330,12 @@ object ChineseBoshiamy {
     fun writeSchemaFiles(context: Context, userDir: File) {
         if(!userDir.isDirectory) return
 
-        val table = tableFile(context)
-        val dictionary = if(table.isFile) table.readBytes() else emptyDictionary.toByteArray()
+        // The table may be removed meanwhile, which doesn't wait for this
+        val dictionary = try {
+            tableFile(context).readBytes()
+        } catch(e: IOException) {
+            emptyDictionary.toByteArray()
+        }
 
         listOf(
             File(userDir, "$SchemaId.schema.yaml") to schema.toByteArray(),
